@@ -1,0 +1,12 @@
+## Interface: 110207, 120001
+## Title: WhoNeeds_Data
+## Notes: Curated stat priorities and BiS data for WhoNeeds.
+## Author: Codex
+## Version: 0.1.0
+## Category: Loot
+## Category-frFR: Butin
+## Group: WhoNeeds
+## IconTexture: Interface\AddOns\WhoNeeds_Data\Media\WhoNeedsDataIcon
+## RequiredDeps: WhoNeeds
+
+WhoNeeds_Data.lua

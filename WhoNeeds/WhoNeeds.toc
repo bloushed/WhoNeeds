@@ -1,0 +1,15 @@
+## Interface: 110207, 120001
+## Title: WhoNeeds
+## Notes: Tracks boss loot upgrades for your current specialization.
+## Author: Codex
+## Version: 0.1.0
+## Category: Loot
+## Category-frFR: Butin
+## IconTexture: Interface\AddOns\WhoNeeds\Media\WhoNeedsIcon
+## SavedVariables: WhoNeedsDB
+
+Data.lua
+Locales.lua
+Analyzer.lua
+UI.lua
+Core.lua
