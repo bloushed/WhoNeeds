@@ -4,7 +4,18 @@ desktop.ini
 
 .vscode/
 .idea/
+.codex/
+scripts/
 
 *.tmp
 *.bak
 *.log
+*.zip
+
+# Local WoW packaging / release assets
+WhoNeeds/Media/WhoNeeds_400x400.png
+
+# Explicit local helper scripts and generated skill tools
+.codex/skills/deploy-wow-addons/scripts/deploy_addons.ps1
+.codex/skills/check-wow-encoding/scripts/check_encoding.py
+.codex/skills/check-wow-locales/scripts/check_locales.py

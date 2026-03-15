@@ -95,11 +95,14 @@ local function cloneTable(source)
 end
 
 local function debugEquipCheck(prefix, itemLink, profile, equipLoc, itemClassID, itemSubClassID, reason)
+    if not addon.IsDebugEnabled or not addon:IsDebugEnabled() then
+        return
+    end
     local _, itemType, itemSubType = GetItemInfo(itemLink)
     local profileClass = profile and profile.classFile or "UNKNOWN"
     local expectedArmor = profile and profile.armorSubclass or "nil"
-    print(string.format(
-        "|cff33ff99WhoNeeds DEBUG|r %s item=%s class=%s expectedArmor=%s equipLoc=%s itemClassID=%s itemSubClassID=%s itemType=%s itemSubType=%s reason=%s",
+    addon:DebugLog(
+        "%s item=%s class=%s expectedArmor=%s equipLoc=%s itemClassID=%s itemSubClassID=%s itemType=%s itemSubType=%s reason=%s",
         tostring(prefix or "equip-check"),
         tostring(itemLink),
         tostring(profileClass),
@@ -110,7 +113,7 @@ local function debugEquipCheck(prefix, itemLink, profile, equipLoc, itemClassID,
         tostring(itemType or "nil"),
         tostring(itemSubType or "nil"),
         tostring(reason or "nil")
-    ))
+    )
 end
 
 function addon:GetPlayerRoleBucket(role, primaryStat, classFile)
@@ -481,16 +484,56 @@ function addon:GetTopStatSummary(stats, weights)
     end
 
     local firstAmt = contributions[1] and contributions[1].amount or 0
-    local first = self.constants.statLabels[contributions[1].token] or contributions[1].token
+    local first = (addon.L and addon.L[contributions[1].token]) or self.constants.statLabels[contributions[1].token] or contributions[1].token
     local firstStr = firstAmt .. " " .. first
 
     local secondAmt = contributions[2] and contributions[2].amount
-    local second = contributions[2] and (self.constants.statLabels[contributions[2].token] or contributions[2].token)
+    local second = contributions[2] and ((addon.L and addon.L[contributions[2].token]) or self.constants.statLabels[contributions[2].token] or contributions[2].token)
     
     if second then
-        return firstStr .. "  •  " .. secondAmt .. " " .. second
+        return firstStr .. "  " .. (addon.L and addon.L.META_SEPARATOR or "-") .. "  " .. secondAmt .. " " .. second
     end
     return firstStr
+end
+
+function addon:GetItemAnalysisFlags(itemLink, stats, weights)
+    local _, _, _, equipLoc = GetItemInfoInstant(itemLink)
+    local primaryToken = weights and weights.PRIMARY_TOKEN or nil
+    local modeledCombatStatTotal = 0
+
+    if primaryToken and stats[primaryToken] then
+        modeledCombatStatTotal = modeledCombatStatTotal + (stats[primaryToken] or 0)
+    end
+
+    modeledCombatStatTotal = modeledCombatStatTotal
+        + (stats.HASTE or 0)
+        + (stats.MASTERY or 0)
+        + (stats.CRIT or 0)
+        + (stats.VERS or 0)
+
+    local isTrinket = equipLoc == "INVTYPE_TRINKET"
+    local approximate = false
+    local note = nil
+
+    if isTrinket then
+        approximate = true
+        if modeledCombatStatTotal > 0 then
+            note = addon.L.SUMMARY_APPROX_TRINKET
+        else
+            note = addon.L.SUMMARY_APPROX_EFFECT
+        end
+    elseif modeledCombatStatTotal <= 0 then
+        approximate = true
+        note = addon.L.SUMMARY_APPROX_EFFECT
+    end
+
+    return {
+        equipLoc = equipLoc,
+        isTrinket = isTrinket,
+        approximate = approximate,
+        note = note,
+        modeledCombatStatTotal = modeledCombatStatTotal,
+    }
 end
 
 function addon:IsBisItem(specID, itemID)
@@ -520,6 +563,7 @@ function addon:EvaluateItemForSelf(itemLink)
     local baselineItemLevel = baseline and baseline.itemLevel or 0
     local delta = score - baselineScore
     local summary = self:GetTopStatSummary(stats, profile.weights)
+    local analysis = self:GetItemAnalysisFlags(itemLink, stats, profile.weights)
     local status = "PASS"
 
     if self:IsBisItem(profile.specID, itemID) then
@@ -532,12 +576,25 @@ function addon:EvaluateItemForSelf(itemLink)
         status = "SIDEGRADE"
     end
 
+    if analysis.approximate and status == "PASS" and baselineItemLevel > 0 and itemLevel > baselineItemLevel then
+        status = "SIDEGRADE"
+    end
+
+    if analysis.note and analysis.note ~= "" then
+        if summary and summary ~= "" then
+            summary = summary .. "  " .. (addon.L and addon.L.META_SEPARATOR or "-") .. "  " .. analysis.note
+        else
+            summary = analysis.note
+        end
+    end
+
     return {
         status = status,
         score = score,
         delta = delta,
         itemLevel = itemLevel,
         summary = summary,
+        approximate = analysis.approximate,
         equipLoc = equipLoc,
         slotID = slotID,
         baselineItemID = baseline and baseline.itemID or nil,

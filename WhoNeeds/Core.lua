@@ -6,7 +6,7 @@ local refreshTicker = nil
 
 local function showMissingDataPackPopup()
     StaticPopupDialogs["WHONEEDS_MISSING_DATA_PACK"] = {
-        text = "WhoNeeds is running without WhoNeeds_Data.\n\nThe addon will still work with generic fallback weights, but accurate spec priorities and curated BiS lists require the WhoNeeds_Data companion addon.\n\nInstall WhoNeeds_Data in Interface\\AddOns, then reload or relog.",
+        text = addon.L.MISSING_DATA_PACK_POPUP,
         button1 = OKAY,
         timeout = 0,
         whileDead = true,
@@ -185,12 +185,61 @@ function addon:BroadcastProfile()
 end
 
 function addon:StoreResponse(record, sender, response)
+    local previous = record.responses[sender]
+    local wasInterested = previous and previous.status ~= "PASS"
+    local isInterested = response and response.status ~= "PASS"
+    record.nextInterestOrder = math.max(tonumber(record.nextInterestOrder) or 0, tonumber(response.interestOrder) or 0)
+
+    if isInterested then
+        if not response.interestOrder or response.interestOrder <= 0 then
+            if wasInterested and previous and previous.interestOrder then
+                response.interestOrder = previous.interestOrder
+            else
+                response.interestOrder = self:AllocateInterestOrder(record)
+            end
+        end
+        record.nextInterestOrder = math.max(tonumber(record.nextInterestOrder) or 0, tonumber(response.interestOrder) or 0)
+        response.updatedAt = response.updatedAt or GetTime()
+    else
+        response.interestOrder = nil
+        response.updatedAt = nil
+    end
+
     record.responses[sender] = response
     if sender == self.playerName then
         record.localItemLevel = response.itemLevel or record.localItemLevel
         record.localInterest = response.status ~= "PASS"
     end
     self:RefreshUI()
+end
+
+function addon:GetResponseRoll(response)
+    local roll = tonumber(response and response.roll) or 0
+    if roll < 1 or roll > 100 then
+        return 0
+    end
+    return math.floor(roll)
+end
+
+function addon:EnsureResponseRoll(record, sender, response)
+    if not response or response.status == "PASS" then
+        return 0
+    end
+
+    local roll = self:GetResponseRoll(response)
+    if roll > 0 then
+        response.roll = roll
+        return roll
+    end
+
+    local previous = record and record.responses and record.responses[sender]
+    roll = self:GetResponseRoll(previous)
+    if roll == 0 then
+        roll = math.random(1, 100)
+    end
+
+    response.roll = roll
+    return roll
 end
 
 function addon:SendFitResponse(key, response)
@@ -203,6 +252,9 @@ function addon:SendFitResponse(key, response)
         self:SanitizeMessage(response.summary or response.reason or ""),
         tostring(response.baselineItemID or 0),
         tostring(response.baselineItemLevel or 0),
+        tostring(response.interestOrder or 0),
+        tostring(response.updatedAt or 0),
+        tostring(response.roll or 0),
     }, "\t")
 
     self:SendAddonPacket(message)
@@ -210,35 +262,42 @@ end
 
 function addon:HandleLoot(encounterID, itemID, itemLink, quantity, playerName, classFileName, options)
     local ownerName = playerName or "Unknown"
-    local key = self:MakeLootKey(encounterID, ownerName, itemID, quantity)
-    local payload = {
-        owner = ownerName,
-        ownerClass = classFileName,
-        itemID = itemID,
-        itemLink = itemLink,
-        itemName = itemLink and GetItemInfo(itemLink) or nil,
-        quantity = quantity,
-    }
-    
-    if options and options.forceInstanceKey then
-        payload.forceInstanceKey = options.forceInstanceKey
-        payload.forceInstanceName = options.forceInstanceName
-    end
-
-    local record, isNewRecord = self:GetOrCreateLootRecord(key, payload)
-
-    self.peerProfiles[self:ShortName(ownerName)] = self.peerProfiles[self:ShortName(ownerName)] or {
-        classFile = classFileName,
-    }
-    if not (options and options.simulated) then
-        self:MarkPendingEncounterLooter(ownerName)
-        local ownerUnit = self:ResolveGroupUnitByName(ownerName)
-        if ownerUnit then
-            self:QueueInspectUnit(ownerUnit, true)
-        end
-    end
 
     self:ContinueWithItem(itemLink, function(link)
+        local isTrackable, ignoreReason = self:IsTrackableLootItem(link)
+        if not isTrackable then
+            self:DebugLog("Ignored loot owner=%s item=%s reason=%s", tostring(ownerName), tostring(link), tostring(ignoreReason or "unknown"))
+            return
+        end
+
+        local key = self:MakeLootKey(encounterID, ownerName, itemID, quantity)
+        local payload = {
+            owner = ownerName,
+            ownerClass = classFileName,
+            itemID = itemID,
+            itemLink = link,
+            itemName = GetItemInfo(link) or nil,
+            quantity = quantity,
+        }
+
+        if options and options.forceInstanceKey then
+            payload.forceInstanceKey = options.forceInstanceKey
+            payload.forceInstanceName = options.forceInstanceName
+        end
+
+        local record, isNewRecord = self:GetOrCreateLootRecord(key, payload)
+
+        self.peerProfiles[self:ShortName(ownerName)] = self.peerProfiles[self:ShortName(ownerName)] or {
+            classFile = classFileName,
+        }
+        if not (options and options.simulated) then
+            self:MarkPendingEncounterLooter(ownerName)
+            local ownerUnit = self:ResolveGroupUnitByName(ownerName)
+            if ownerUnit then
+                self:QueueInspectUnit(ownerUnit, true)
+            end
+        end
+
         self:BuildLocalProfile()
         self:RefreshLocalGear()
 
@@ -253,9 +312,9 @@ function addon:HandleLoot(encounterID, itemID, itemLink, quantity, playerName, c
                 response.delta = math.max(response.delta or 0, 1)
                 response.reason = nil
             end
-            response.summary = "Forced interest for simulation"
+            response.summary = self.L.SUMMARY_FORCED_INTEREST
         end
-        response.summary = response.summary or response.reason or "No useful stats"
+        response.summary = response.summary or response.reason or self.L.SUMMARY_NO_USEFUL_STATS
         response.itemLevel = response.itemLevel or self:GetDetailedItemLevel(link)
 
         self:StoreResponse(record, self.playerName, response)
@@ -280,7 +339,7 @@ end
 function addon:SimulateLootInput(itemText, ownerText, forceInterested)
     local text = strtrim(tostring(itemText or ""))
     if text == "" then
-        print("|cff33ff99WhoNeeds|r simulation usage: enter an item link or itemID.")
+        print("|cff33ff99WhoNeeds|r " .. self.L.SLASH_SIM_USAGE)
         return
     end
 
@@ -297,7 +356,7 @@ function addon:SimulateLootInput(itemText, ownerText, forceInterested)
     end
 
     if not itemID then
-        print("|cff33ff99WhoNeeds|r unable to parse that item. Paste a real item link or a numeric itemID.")
+        print("|cff33ff99WhoNeeds|r " .. self.L.SLASH_PARSE_FAILED)
         return
     end
 
@@ -315,9 +374,9 @@ function addon:SimulateLootInput(itemText, ownerText, forceInterested)
         simulated = true,
         forceInterested = forceInterested,
         forceInstanceKey = "Simulation",
-        forceInstanceName = "Simulations",
+        forceInstanceName = self.L.SIMULATIONS,
     })
-    print(string.format("|cff33ff99WhoNeeds|r simulated loot for %s: %s", ownerName, tostring(itemLink)))
+    print(string.format("|cff33ff99WhoNeeds|r " .. self.L.SLASH_SIM_DONE, ownerName, tostring(itemLink)))
 end
 
 function addon:HandleAddonMessage(message, sender)
@@ -326,7 +385,7 @@ function addon:HandleAddonMessage(message, sender)
         return
     end
 
-    local command, a, b, c, d, e, f, g = strsplit("\t", message)
+    local command, a, b, c, d, e, f, g, h, i, j = strsplit("\t", message)
 
     if command == "P" then
         self.peerProfiles[senderKey] = {
@@ -353,23 +412,26 @@ function addon:HandleAddonMessage(message, sender)
             summary = e or "",
             baselineItemID = tonumber(f) or 0,
             baselineItemLevel = tonumber(g) or 0,
+            interestOrder = tonumber(h) or 0,
+            updatedAt = tonumber(i) or 0,
+            roll = tonumber(j) or 0,
         })
     end
 end
 
 function addon:BuildWhisperMessage(record, response)
-    local itemLabel = record.itemLink or (record.itemID and ("item:" .. record.itemID)) or "that item"
-    local yourStatus = response and (self.constants.statusLabels[response.status] or response.status) or "interesting"
-    return string.format("Hi, do you need %s? It looks %s for me if not.", itemLabel, yourStatus)
+    local itemLabel = record.itemLink or (record.itemID and ("item:" .. record.itemID)) or self.L.DEFAULT_ITEM_LABEL
+    local yourStatus = response and (self.L[response.status] or response.status) or self.L.DEFAULT_STATUS_INTERESTING
+    return string.format(self.L.DEFAULT_WHISPER_TEMPLATE, itemLabel, yourStatus)
 end
 
 function addon:FormatWhisperTemplate(template, record, response)
-    local itemLabel = record.itemLink or (record.itemID and ("item:" .. record.itemID)) or "that item"
-    local statusLabel = response and (self.constants.statusLabels[response.status] or response.status) or "interesting"
-    local normalizedStatus = string.lower(statusLabel or "interesting")
+    local itemLabel = record.itemLink or (record.itemID and ("item:" .. record.itemID)) or self.L.DEFAULT_ITEM_LABEL
+    local statusLabel = response and (self.L[response.status] or response.status) or self.L.DEFAULT_STATUS_INTERESTING
+    local normalizedStatus = string.lower(statusLabel or self.L.DEFAULT_STATUS_INTERESTING)
     local message = template:gsub("{item}", itemLabel)
     message = message:gsub("{status}", normalizedStatus)
-    message = message:gsub("{owner}", record.owner or "you")
+    message = message:gsub("{owner}", record.owner or self.L.YOU)
     return message
 end
 
@@ -483,7 +545,7 @@ function addon:SendLootWhisper(target, record, message, isFast)
     self:RecordWhisper(record, target, message, isFast)
 
     if isFast then
-        print("|cff33ff99WhoNeeds|r Sent to " .. target .. ": " .. message)
+        print(string.format("|cff33ff99WhoNeeds|r " .. self.L.FAST_ASK_SENT, target, message))
     end
     self:ScheduleFastWhisperRefresh(record, target)
 
@@ -503,13 +565,13 @@ function addon:GetOwnerInspectResponse(record)
     }
     local canUse, reason = self:CanProfileUseItem(record.itemLink, profile)
     if not canUse then
-        print(string.format(
-            "|cff33ff99WhoNeeds DEBUG|r OwnerInspect owner=%s class=%s item=%s reason=%s",
+        self:DebugLog(
+            "OwnerInspect owner=%s class=%s item=%s reason=%s",
             tostring(record.ownerShort),
             tostring(cache.classFile or "UNKNOWN"),
             tostring(record.itemLink),
             tostring(reason or "nil")
-        ))
+        )
         return {
             status = "PASS",
             delta = 0,
@@ -537,14 +599,37 @@ function addon:GetOwnerInspectResponse(record)
         status = "SIDEGRADE"
     end
 
+    if equipLoc == "INVTYPE_TRINKET" and status == "PASS" and baselineLevel > 0 and itemLevel > baselineLevel then
+        status = "SIDEGRADE"
+    end
+
     return {
         status = status,
         delta = delta,
         itemLevel = itemLevel,
-        summary = "Owner fallback by inspected ilvl",
+        summary = (equipLoc == "INVTYPE_TRINKET") and self.L.SUMMARY_APPROX_OWNER or self.L.SUMMARY_OWNER_FALLBACK,
         baselineItemID = baseline and baseline.itemID or nil,
         baselineItemLevel = baseline and baseline.itemLevel or nil,
+        approximate = (equipLoc == "INVTYPE_TRINKET"),
     }
+end
+
+function addon:IsInspectPendingForPlayer(shortName)
+    if not shortName or shortName == "" then
+        return false
+    end
+
+    if self.pendingInspect and self.pendingInspect.shortName == shortName then
+        return true
+    end
+
+    for _, queued in ipairs(self.inspectQueue or {}) do
+        if queued.shortName == shortName then
+            return true
+        end
+    end
+
+    return false
 end
 
 function addon:GetTradeReferenceFromGear(equipLoc, gearMap)
@@ -596,35 +681,46 @@ function addon:GetTradeReferenceFromGear(equipLoc, gearMap)
     return getSlot(slots[1])
 end
 
-function addon:IsLootTradableByOwner(record)
+function addon:GetLootTradableState(record)
     if not record or not record.itemLink then
-        return nil
+        return "UNKNOWN"
     end
 
     local _, _, _, equipLoc = GetItemInfoInstant(record.itemLink)
     if not equipLoc or equipLoc == "" then
-        return nil
+        return "UNKNOWN"
     end
 
     local itemLevel = self:GetDetailedItemLevel(record.itemLink)
     if record.ownerShort == self.playerName then
         local equipped = self:GetTradeReferenceFromGear(equipLoc, self.localGear)
         if not equipped then
-            return nil
+            return "UNKNOWN"
         end
-        return (equipped.itemLevel or 0) >= itemLevel
+        return ((equipped.itemLevel or 0) >= itemLevel) and "YES" or "NO"
     end
 
     local cache = self.inspectCacheByName[record.ownerShort]
     if not cache or not cache.gear then
-        return nil
+        return "UNKNOWN"
     end
 
     local equipped = self:GetTradeReferenceFromGear(equipLoc, cache.gear)
     if not equipped then
-        return nil
+        return "UNKNOWN"
     end
-    return (equipped.itemLevel or 0) >= itemLevel
+    return ((equipped.itemLevel or 0) >= itemLevel) and "YES" or "NO"
+end
+
+function addon:IsLootTradableByOwner(record)
+    local state = self:GetLootTradableState(record)
+    if state == "YES" then
+        return true
+    end
+    if state == "NO" then
+        return false
+    end
+    return nil
 end
 
 function addon:HandleSlashCommand(text)
@@ -638,17 +734,23 @@ function addon:HandleSlashCommand(text)
 
     if command == "msg" and rest ~= "" then
         self.db.options.whisperMessage = rest
-        print(string.format("|cff33ff99WhoNeeds|r whisper message set to: %s", rest))
+        print(string.format("|cff33ff99WhoNeeds|r " .. self.L.SLASH_MSG_SET, rest))
         return
     end
 
     if command == "data" then
         local status = self:GetDataStatus()
         if status.hasData then
-            print(string.format("|cff33ff99WhoNeeds|r data pack loaded: %s (%s).", tostring(status.version), tostring(status.source)))
+            print(string.format("|cff33ff99WhoNeeds|r " .. self.L.SLASH_DATA_LOADED, tostring(status.version), tostring(status.source)))
         else
-            print("|cff33ff99WhoNeeds|r WhoNeeds_Data is not installed. Generic fallback weights are active; curated spec stat priorities and BiS lists are unavailable.")
+            print("|cff33ff99WhoNeeds|r " .. self.L.SLASH_DATA_MISSING)
         end
+        return
+    end
+
+    if command == "debug" then
+        self.db.options.debugMode = not (self.db.options and self.db.options.debugMode == true)
+        print(string.format("|cff33ff99WhoNeeds|r " .. self.L.SLASH_DEBUG_STATE, self.db.options.debugMode and self.L.SLASH_ENABLED or self.L.SLASH_DISABLED))
         return
     end
 
@@ -675,25 +777,25 @@ function addon:HandleSlashCommand(text)
         local itemID = tonumber(value)
         local specID = self.localProfile and self.localProfile.specID
         if not specID or specID == 0 or not itemID then
-            print("|cff33ff99WhoNeeds|r usage: /whoneeds bis add 12345")
+            print("|cff33ff99WhoNeeds|r " .. self.L.SLASH_BIS_USAGE)
             return
         end
 
         self.db.bis[specID] = self.db.bis[specID] or {}
         if action == "add" then
             self.db.bis[specID][itemID] = true
-            print(string.format("|cff33ff99WhoNeeds|r item %d added as BiS for spec %d.", itemID, specID))
+            print(string.format("|cff33ff99WhoNeeds|r " .. self.L.SLASH_BIS_ADDED, itemID, specID))
             return
         end
 
         if action == "remove" or action == "del" then
             self.db.bis[specID][itemID] = nil
-            print(string.format("|cff33ff99WhoNeeds|r item %d removed from BiS for spec %d.", itemID, specID))
+            print(string.format("|cff33ff99WhoNeeds|r " .. self.L.SLASH_BIS_REMOVED, itemID, specID))
             return
         end
     end
 
-    print("|cff33ff99WhoNeeds|r commands: /whoneeds, /whoneeds data, /whoneeds sim <itemID|link> [owner:Name], /whoneeds simforce <itemID|link> [owner:Name], /whoneeds msg <text>, /whoneeds bis add <itemID>, /whoneeds bis remove <itemID>")
+    print("|cff33ff99WhoNeeds|r " .. self.L.SLASH_COMMANDS)
 end
 
 function addon:OnEvent(event, ...)

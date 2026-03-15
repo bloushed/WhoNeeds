@@ -145,6 +145,7 @@ addon.defaults = {
         filterOwnDrops = true,
         filterTradableOnly = false,
         autoOpen = true,
+        debugMode = false,
         minimap = {
             angle = 225,
             hidden = false,
@@ -330,10 +331,53 @@ function addon:ContinueWithItem(itemLink, callback)
     end)
 end
 
+function addon:IsTrackableLootItem(itemLink)
+    if not itemLink or itemLink == "" then
+        return false
+    end
+
+    local _, _, _, _, _, itemType, itemSubType, _, equipLoc = GetItemInfo(itemLink)
+    if not equipLoc or equipLoc == "" then
+        return false, string.format("Ignored non-gear loot (%s / %s)", tostring(itemType or "Unknown"), tostring(itemSubType or "Unknown"))
+    end
+
+    if self.constants.equipLocToSlots[equipLoc] ~= nil then
+        return true
+    end
+
+    return false, string.format("Ignored unsupported gear slot (%s)", tostring(equipLoc))
+end
+
+function addon:IsDebugEnabled()
+    return self.db and self.db.options and self.db.options.debugMode == true
+end
+
+function addon:DebugLog(formatText, ...)
+    if not self:IsDebugEnabled() then
+        return
+    end
+
+    if select("#", ...) > 0 then
+        print(string.format("|cff33ff99WhoNeeds DEBUG|r " .. tostring(formatText), ...))
+        return
+    end
+
+    print("|cff33ff99WhoNeeds DEBUG|r " .. tostring(formatText))
+end
+
 function addon:SanitizeMessage(text)
     text = tostring(text or "")
     text = text:gsub("[\r\n\t]", " ")
     return text
+end
+
+function addon:AllocateInterestOrder(record)
+    if type(record) ~= "table" then
+        return 0
+    end
+
+    record.nextInterestOrder = math.max(tonumber(record.nextInterestOrder) or 0, 0) + 1
+    return record.nextInterestOrder
 end
 
 function addon:MakeLootKey(encounterID, playerName, itemID, quantity)
@@ -441,6 +485,7 @@ function addon:GetOrCreateLootRecord(key, payload)
         responses = {},
         localInterest = nil,
         whisperHistory = {},
+        nextInterestOrder = 0,
     }
 
     table.insert(instDB.lootHistory, 1, record)

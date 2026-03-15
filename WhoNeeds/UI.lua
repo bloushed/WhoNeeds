@@ -6,6 +6,17 @@ local MINIMAP_ICON = "Interface\\AddOns\\WhoNeeds\\Media\\WhoNeedsIcon"
 local LOOT_ROW_HEIGHT = 116
 local LOOT_ROW_STEP = 124
 
+local function isEquipabilityFailure(reason)
+    return reason == addon.L.REASON_CLASS_ARMOR
+        or reason == addon.L.REASON_CLASS_WEAP
+        or reason == addon.L.REASON_CLASS_SHIELD
+        or reason == addon.L.REASON_WRONG_ARMOR
+        or reason == addon.L.REASON_UNKNOWN_WEAP
+        or reason == addon.L.REASON_NOT_EQUIPPABLE
+        or reason == addon.L.REASON_MISSING
+        or reason == addon.L.REASON_UNKNOWN_SLOT
+end
+
 local function setStatusPanelColor(texture, response)
     if not texture then
         return
@@ -14,7 +25,7 @@ local function setStatusPanelColor(texture, response)
     local status = response and response.status or nil
     local reason = response and response.reason or ""
 
-    if status == "PASS" and (reason == "Class cannot equip it" or reason == "Class cannot equip this weapon" or reason == "Class cannot equip shields" or reason == "Wrong armor type" or reason == "Unknown weapon slot" or reason == "Not equippable" or reason == "Missing item" or reason == "Unknown slot") then
+    if status == "PASS" and isEquipabilityFailure(reason) then
         texture:SetColorTexture(0.35, 0.05, 0.05, 0.92)
         return
     end
@@ -36,6 +47,37 @@ local function setStatusPanelColor(texture, response)
         return
     end
     texture:SetColorTexture(0.12, 0.12, 0.14, 0.9)
+end
+
+local function registerEscapeFrame(frame)
+    if not frame or type(UISpecialFrames) ~= "table" then
+        return
+    end
+
+    local name = frame.GetName and frame:GetName() or nil
+    if not name or name == "" then
+        return
+    end
+
+    for _, existing in ipairs(UISpecialFrames) do
+        if existing == name then
+            return
+        end
+    end
+
+    table.insert(UISpecialFrames, name)
+end
+
+local function copyResponse(response)
+    local copy = {}
+    if type(response) ~= "table" then
+        return copy
+    end
+
+    for key, value in pairs(response) do
+        copy[key] = value
+    end
+    return copy
 end
 
 local function createModernFrame(name, parent)
@@ -675,6 +717,9 @@ local function ensurePopupOverlay()
         if addon.frame and addon.frame.askMenu then
             addon.frame.askMenu:Hide()
         end
+        if addon.interestedMenu then
+            addon.interestedMenu:Hide()
+        end
         if addon.langMenu then
             addon.langMenu:Hide()
         end
@@ -696,6 +741,8 @@ local function refreshPopupOverlay()
 
     local anyPopupShown = false
     if addon.frame and addon.frame.askMenu and addon.frame.askMenu:IsShown() then
+        anyPopupShown = true
+    elseif addon.interestedMenu and addon.interestedMenu:IsShown() then
         anyPopupShown = true
     elseif addon.langMenu and addon.langMenu:IsShown() then
         anyPopupShown = true
@@ -743,13 +790,13 @@ local function createAskMenu()
 
     frame.title = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
     frame.title:SetPoint("CENTER", frame.headerBg, "CENTER", 0, 0)
-    frame.title:SetText("Ask...")
+    frame.title:SetText(addon.L.ASK_MENU_TITLE)
 
     frame.subtitle = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     frame.subtitle:SetPoint("TOPLEFT", 16, -32)
     frame.subtitle:SetPoint("TOPRIGHT", -16, -32)
     frame.subtitle:SetJustifyH("LEFT")
-    frame.subtitle:SetText("Choose a whisper to send.")
+    frame.subtitle:SetText(addon.L.ASK_MENU_SUBTITLE)
 
     frame.buttons = {}
     for index = 1, 10 do
@@ -818,7 +865,7 @@ local function getLootVerdict(record, localResponse, ownerResponse, tradableStat
         return addon.L.VERDICT_NOT_FOR_YOU, 0.60, 0.60, 0.60
     end
 
-    if tradableState == false then
+    if tradableState == "NO" or tradableState == false then
         return addon.L.VERDICT_NOT_TRADABLE, 0.75, 0.28, 0.20
     end
 
@@ -835,6 +882,16 @@ local function getLootVerdict(record, localResponse, ownerResponse, tradableStat
     end
 
     return addon.L.VERDICT_OWNER_NEEDS, 0.90, 0.32, 0.24
+end
+
+local function getTradableLabel(tradableState)
+    if tradableState == "YES" or tradableState == true then
+        return addon.L.TRADEABLE_YES, "66ffcc"
+    end
+    if tradableState == "NO" or tradableState == false then
+        return addon.L.TRADEABLE_NO, "ff9966"
+    end
+    return addon.L.TRADEABLE_UNKNOWN, "d7c778"
 end
 
 local function styleRowButton(button, width)
@@ -1064,6 +1121,24 @@ local function createRow(parent, index)
     row.groupInterest:SetPoint("BOTTOMRIGHT", 0, 0)
     row.groupInterest:SetJustifyH("LEFT")
 
+    row.footerArea:EnableMouse(true)
+    row.footerArea:SetScript("OnEnter", function(self)
+        row.groupInterest:SetTextColor(0.95, 0.84, 0.40)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText(addon.L.INTEREST_MENU_HINT, 1, 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    row.footerArea:SetScript("OnLeave", function()
+        row.groupInterest:SetTextColor(0.90, 0.90, 0.90)
+        GameTooltip:Hide()
+    end)
+    row.footerArea:SetScript("OnMouseUp", function(self, button)
+        if button ~= "LeftButton" or not self.record then
+            return
+        end
+        addon:ShowInterestedMenu(self.record, self)
+    end)
+
     row.btnContainer = CreateFrame("Frame", nil, row.summaryArea)
     row.btnContainer:SetPoint("TOPRIGHT", 0, 0)
     row.btnContainer:SetSize(286, 22)
@@ -1115,6 +1190,13 @@ local function createRow(parent, index)
     row.rollBtn:SetPoint("RIGHT", row.rapidAskBtn, "LEFT", -4, 0)
     row.rollBtn:SetText(addon.L.ROLL)
     row.rollBtn:SetScript("OnClick", function(self)
+        local localResponse = self.localResponse or (self.record and self.record.responses and self.record.responses[addon.playerName]) or nil
+        if self.record and localResponse and localResponse.status ~= "PASS" then
+            local response = copyResponse(localResponse)
+            addon:EnsureResponseRoll(self.record, addon.playerName, response)
+            addon:StoreResponse(self.record, addon.playerName, response)
+            addon:SendFitResponse(self.record.key, response)
+        end
         announceRoll(self.record)
         if C_Timer and C_Timer.After then
             C_Timer.After(0.15, function()
@@ -1134,14 +1216,23 @@ local function createRow(parent, index)
         
         local currentRes = row.record.responses[addon.playerName]
         local isCurrentlyInterested = currentRes and currentRes.status ~= "PASS"
-        local newStatus = isCurrentlyInterested and "PASS" or "UPGRADE"
-        
-        local response = {
-            status = newStatus,
-            delta = currentRes and currentRes.delta or 0,
-            itemLevel = currentRes and currentRes.itemLevel or 0,
-            reason = "Manual override"
-        }
+        local response
+
+        if isCurrentlyInterested then
+            response = copyResponse(currentRes)
+            response.status = "PASS"
+            response.reason = response.reason or addon.L.REASON_MANUAL_OVERRIDE
+            response.summary = response.summary or addon.L.REASON_MANUAL_OVERRIDE
+        else
+            response = {
+                status = "UPGRADE",
+                delta = currentRes and currentRes.delta or 0,
+                itemLevel = currentRes and currentRes.itemLevel or 0,
+                reason = addon.L.REASON_MANUAL_OVERRIDE,
+                summary = addon.L.REASON_MANUAL_OVERRIDE,
+            }
+            addon:EnsureResponseRoll(row.record, addon.playerName, response)
+        end
         
         addon:StoreResponse(row.record, addon.playerName, response)
         addon:SendFitResponse(row.record.key, response)
@@ -1188,6 +1279,22 @@ function addon:CreateUI()
     frame:RegisterForDrag("LeftButton")
     frame:SetScript("OnDragStart", frame.StartMoving)
     frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
+    frame:HookScript("OnHide", function()
+        if frame.askMenu and frame.askMenu:IsShown() then
+            frame.askMenu:Hide()
+        end
+        if addon.interestedMenu and addon.interestedMenu:IsShown() then
+            addon.interestedMenu:Hide()
+        end
+        if addon.instanceMenu and addon.instanceMenu:IsShown() then
+            addon.instanceMenu:Hide()
+        end
+        if addon.langMenu and addon.langMenu:IsShown() then
+            addon.langMenu:Hide()
+        end
+        refreshPopupOverlay()
+    end)
+    registerEscapeFrame(frame)
 
     local resizeBtn = CreateFrame("Button", nil, frame)
     resizeBtn:SetSize(16, 16)
@@ -1334,7 +1441,7 @@ function addon:CreateUI()
 
     frame.pageText = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
     frame.pageText:SetPoint("BOTTOM", frame, "BOTTOM", 0, 16)
-    frame.pageText:SetText("Page 1 / 1")
+    frame.pageText:SetText(string.format(addon.L.PAGE, 1, 1))
     
     frame.prevBtn = createModernButton(frame, 80, 22, addon.L.PREVIOUS, "muted")
     frame.prevBtn:SetSize(80, 22)
@@ -1369,7 +1476,7 @@ function addon:CreateUI()
     frame.settingsList:SetPoint("BOTTOMRIGHT", -18, 18)
     frame.settingsList:Hide()
 
-    local generalGroup = createCollapsibleGroup(frame.settingsList, "General Options", 28, true)
+    local generalGroup = createCollapsibleGroup(frame.settingsList, addon.L.GENERAL_OPTIONS, 28, true)
     generalGroup:SetPoint("TOPLEFT", 0, 0)
     
     local fastAskGroup = createCollapsibleGroup(frame.settingsList, addon.L.FAST_ASK_TITLE, 305, true)
@@ -1414,9 +1521,13 @@ function addon:CreateUI()
     
     local function updateLangBtnText()
         local lopt = addon.db and addon.db.options and addon.db.options.language or "AUTO"
-        if lopt == "frFR" then langDropBtn:SetText("Français")
-        elseif lopt == "enUS" then langDropBtn:SetText("English")
-        else langDropBtn:SetText("Auto (Client)") end
+        if lopt == "frFR" then
+            langDropBtn:SetText(addon.L.LANGUAGE_FRENCH)
+        elseif lopt == "enUS" then
+            langDropBtn:SetText(addon.L.LANGUAGE_ENGLISH)
+        else
+            langDropBtn:SetText(addon.L.LANGUAGE_AUTO)
+        end
     end
     updateLangBtnText()
     
@@ -1428,6 +1539,7 @@ function addon:CreateUI()
             lm:SetToplevel(true)
             lm:EnableMouse(true)
             lm:HookScript("OnHide", refreshPopupOverlay)
+            registerEscapeFrame(lm)
             lm.title = lm:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
             lm.title:SetPoint("CENTER", lm.headerBg, "CENTER", 0, 0)
             lm.title:SetText(addon.L.LANGUAGE)
@@ -1439,7 +1551,11 @@ function addon:CreateUI()
             lm.scrollFrame:SetScrollChild(lm.scrollChild)
             styleModernScrollBar(lm.scrollFrame)
             
-            local opts = { {k="AUTO", v="Auto (Client)"}, {k="enUS", v="English"}, {k="frFR", v="Français"} }
+            local opts = {
+                { k = "AUTO", v = addon.L.LANGUAGE_AUTO },
+                { k = "enUS", v = addon.L.LANGUAGE_ENGLISH },
+                { k = "frFR", v = addon.L.LANGUAGE_FRENCH },
+            }
             local yOffs = -4
             for i, opt in ipairs(opts) do
                 local b = createModernButton(lm.scrollChild, 140, 24, opt.v, "muted")
@@ -1637,14 +1753,14 @@ function addon:CreateMinimapButton()
     button:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_LEFT")
         GameTooltip:SetText("WhoNeeds", 1, 0.82, 0)
-        GameTooltip:AddLine("Left-click: open or close the loot window.", 1, 1, 1, true)
+        GameTooltip:AddLine(addon.L.MINIMAP_TOOLTIP_OPEN, 1, 1, 1, true)
         if addon.hasUnreadLoot then
-            GameTooltip:AddLine("New loot available.", 0.25, 1, 0.25, true)
+            GameTooltip:AddLine(addon.L.MINIMAP_TOOLTIP_NEW, 0.25, 1, 0.25, true)
         else
-            GameTooltip:AddLine("No unread loot right now.", 0.7, 0.7, 0.7, true)
+            GameTooltip:AddLine(addon.L.MINIMAP_TOOLTIP_IDLE, 0.7, 0.7, 0.7, true)
         end
-        GameTooltip:AddLine("Right-click: clear the new loot flag.", 0.7, 0.7, 0.7, true)
-        GameTooltip:AddLine("Drag: move around the minimap.", 0.7, 0.7, 0.7, true)
+        GameTooltip:AddLine(addon.L.MINIMAP_TOOLTIP_CLEAR, 0.7, 0.7, 0.7, true)
+        GameTooltip:AddLine(addon.L.MINIMAP_TOOLTIP_DRAG, 0.7, 0.7, 0.7, true)
         GameTooltip:Show()
     end)
 
@@ -1714,10 +1830,11 @@ local function createInstanceMenu()
     frame:EnableMouse(true)
     frame:Hide()
     frame:HookScript("OnHide", refreshPopupOverlay)
+    registerEscapeFrame(frame)
 
     frame.title = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
     frame.title:SetPoint("CENTER", frame.headerBg, "CENTER", 0, 0)
-    frame.title:SetText("Select Instance")
+    frame.title:SetText(addon.L.SELECT_INSTANCE_TITLE)
 
     frame.subtitle = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     frame.subtitle:SetPoint("TOPLEFT", frame.title, "BOTTOMLEFT", 0, -6)
@@ -1767,7 +1884,7 @@ function addon:ShowInstanceMenu(anchor)
             menu.buttons[i] = btn
         end
         
-        btn:SetText(" " .. (inst.name or "Unknown"))
+        btn:SetText(" " .. (inst.name or addon.L.UNKNOWN))
         btn.instanceKey = inst.key
         btn:SetPoint("TOPLEFT", 8, yOffset)
         btn:SetScript("OnClick", function(self)
@@ -1842,21 +1959,76 @@ function addon:ToggleUI()
     end
 end
 
-function addon:BuildInterestLine(record)
+function addon:GetInterestedEntries(record)
     local interested = {}
     for playerName, response in pairs(record.responses) do
         if response.status ~= "PASS" then
             local profile = self.peerProfiles[playerName]
             local classFile = profile and profile.classFile
             local status = addon.L[response.status] or response.status
-            local detail = string.format("%s (%s %.1f)", self:GetColoredName(playerName, classFile), status, response.delta or 0)
-            table.insert(interested, { name = playerName, text = detail, score = response.delta or 0 })
+            table.insert(interested, {
+                name = playerName,
+                classFile = classFile,
+                status = status,
+                score = response.delta or 0,
+                roll = self:GetResponseRoll(response),
+                order = tonumber(response.interestOrder) or 0,
+                updatedAt = tonumber(response.updatedAt) or 0,
+            })
         end
     end
+    table.sort(interested, function(a, b)
+        if a.roll > 0 and b.roll > 0 and a.roll ~= b.roll then
+            return a.roll > b.roll
+        end
+        if a.roll > 0 and b.roll == 0 then
+            return true
+        end
+        if b.roll > 0 and a.roll == 0 then
+            return false
+        end
+        if a.order > 0 and b.order > 0 and a.order ~= b.order then
+            return a.order < b.order
+        end
+        if a.order > 0 and b.order == 0 then
+            return true
+        end
+        if b.order > 0 and a.order == 0 then
+            return false
+        end
+        if a.updatedAt ~= b.updatedAt then
+            return a.updatedAt < b.updatedAt
+        end
+        if a.score ~= b.score then
+            return a.score > b.score
+        end
+        return a.name < b.name
+    end)
+
+    for index, entry in ipairs(interested) do
+        entry.displayOrder = entry.order > 0 and entry.order or index
+        local label = string.format(
+            "%s (%s %.1f)",
+            self:GetColoredName(entry.name, entry.classFile),
+            entry.status,
+            entry.score
+        )
+        if entry.roll > 0 then
+            entry.text = string.format("|cffffd26a[%d]|r %s", entry.roll, label)
+        else
+            entry.text = string.format("%d. %s", entry.displayOrder, label)
+        end
+    end
+
+    return interested
+end
+
+function addon:BuildInterestLine(record)
+    local interested = self:GetInterestedEntries(record)
     if #interested == 0 then
         return addon.L.INTERESTED .. addon.L.NOBODY_YET
     end
-    table.sort(interested, function(a, b) return a.score > b.score end)
+
     local texts = {}
     for _, entry in ipairs(interested) do
         table.insert(texts, entry.text)
@@ -1864,21 +2036,130 @@ function addon:BuildInterestLine(record)
     return addon.L.INTERESTED .. table.concat(texts, ", ")
 end
 
+function addon:ShowInterestedMenu(record, anchor)
+    self:CreateUI()
+
+    if not self.interestedMenu then
+        self.interestedMenu = self:CreateInterestedMenu()
+    end
+
+    local menu = self.interestedMenu
+    local entries = self:GetInterestedEntries(record)
+    menu.subtitle:SetText(addon.L.INTEREST_MENU_SUBTITLE)
+    menu.empty:SetShown(#entries == 0)
+
+    for index, row in ipairs(menu.rows) do
+        local entry = entries[index]
+        if entry then
+            row.text:SetText(entry.text)
+            if entry.roll > 0 and index == 1 then
+                row.bg:SetColorTexture(0.22, 0.17, 0.05, 0.90)
+            elseif entry.roll > 0 then
+                row.bg:SetColorTexture(0.16, 0.12, 0.05, 0.88)
+            else
+                row.bg:SetColorTexture(0.10, 0.10, 0.12, 0.88)
+            end
+            row.whisperBtn.targetName = entry.name
+            row.targetBtn.targetName = entry.name
+            row:Show()
+        else
+            row:Hide()
+        end
+    end
+
+    menu:ClearAllPoints()
+    if anchor then
+        menu:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -4)
+    else
+        menu:SetPoint("CENTER")
+    end
+    showPopupFrame(menu)
+end
+
+function addon:CreateInterestedMenu()
+    local frame = createModernFrame("WhoNeedsInterestedMenu", UIParent)
+    frame:SetSize(500, 332)
+    frame:SetFrameStrata("TOOLTIP")
+    frame:SetToplevel(true)
+    frame:EnableMouse(true)
+    frame:Hide()
+    frame:SetScript("OnMouseDown", function() end)
+    frame:SetScript("OnMouseUp", function() end)
+    frame:HookScript("OnHide", refreshPopupOverlay)
+    registerEscapeFrame(frame)
+
+    frame.title = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    frame.title:SetPoint("CENTER", frame.headerBg, "CENTER", 0, 0)
+    frame.title:SetText(addon.L.INTEREST_MENU_TITLE)
+
+    frame.subtitle = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    frame.subtitle:SetPoint("TOPLEFT", 16, -32)
+    frame.subtitle:SetPoint("TOPRIGHT", -16, -32)
+    frame.subtitle:SetJustifyH("LEFT")
+    frame.subtitle:SetText(addon.L.INTEREST_MENU_SUBTITLE)
+
+    frame.empty = frame:CreateFontString(nil, "OVERLAY", "GameFontDisable")
+    frame.empty:SetPoint("TOPLEFT", 18, -64)
+    frame.empty:SetText(addon.L.NOBODY_YET)
+
+    frame.rows = {}
+    for index = 1, 10 do
+        local row = CreateFrame("Frame", nil, frame)
+        row:SetSize(464, 24)
+        row:SetPoint("TOPLEFT", 18, -56 - ((index - 1) * 26))
+
+        row.bg = row:CreateTexture(nil, "BACKGROUND")
+        row.bg:SetAllPoints()
+        row.bg:SetColorTexture(0.10, 0.10, 0.12, 0.88)
+
+        row.text = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        row.text:SetPoint("LEFT", 8, 0)
+        row.text:SetPoint("RIGHT", -120, 0)
+        row.text:SetJustifyH("LEFT")
+
+        row.whisperBtn = createModernButton(row, 42, 20, addon.L.ASK_BUTTON, "accent")
+        row.whisperBtn:SetPoint("RIGHT", -50, 0)
+        row.whisperBtn:SetScript("OnClick", function(self)
+            if self.targetName and ChatFrame_SendTell then
+                ChatFrame_SendTell(self.targetName)
+            end
+        end)
+
+        row.targetBtn = createModernButton(row, 46, 20, addon.L.TARGET, "muted")
+        row.targetBtn:SetPoint("RIGHT", 0, 0)
+        row.targetBtn:SetScript("OnClick", function(self)
+            if not self.targetName then
+                return
+            end
+            local unit = addon:ResolveGroupUnitByName(self.targetName)
+            if unit and TargetUnit then
+                TargetUnit(unit)
+            elseif TargetByName then
+                TargetByName(self.targetName, true)
+            end
+        end)
+
+        frame.rows[index] = row
+    end
+
+    return frame
+end
+
 function addon:GetItemUiDetails(itemLink)
     if not itemLink then
         return {
             icon = nil,
             coloredName = nil,
-            slotText = "Unknown slot",
-            subtypeText = "Unknown type",
+            slotText = addon.L.UNKNOWN_SLOT,
+            subtypeText = addon.L.UNKNOWN_TYPE,
         }
     end
 
     local itemID = GetItemInfoInstant(itemLink)
     local presentation = addon:ResolveItemPresentation(itemLink, itemID)
     local _, _, _, _, _, itemType = GetItemInfo(itemLink)
-    local slotText = (presentation.equipLoc and presentation.equipLoc ~= "" and _G[presentation.equipLoc]) or "Misc"
-    local subtypeText = presentation.itemSubType or itemType or "Unknown type"
+    local slotText = (presentation.equipLoc and presentation.equipLoc ~= "" and _G[presentation.equipLoc]) or addon.L.MISC
+    local subtypeText = presentation.itemSubType or itemType or addon.L.UNKNOWN_TYPE
 
     return {
         icon = presentation.icon,
@@ -1893,17 +2174,17 @@ end
 
 function addon:GetComparisonText(response, fallbackLabel)
     if not response then
-        return fallbackLabel or "No data"
+        return fallbackLabel or addon.L.NO_DATA
     end
 
-    local statusText = addon.L[response.status] or response.status or "Unknown"
+    local statusText = addon.L[response.status] or response.status or addon.L.UNKNOWN
     local deltaText = string.format("%+.1f", response.delta or 0)
     local baselineText = nil
 
     if response.baselineItemID and response.baselineItemID > 0 then
         local details = self:GetItemUiDetails("item:" .. response.baselineItemID)
         baselineText = string.format(
-            "vs %s (iLvl %s)",
+            addon.L.COMPARISON_VS_ITEM,
             details.coloredName or details.name or ("item:" .. response.baselineItemID),
             response.baselineItemLevel or "?"
         )
@@ -1920,10 +2201,10 @@ end
 
 function addon:GetShortComparisonText(response, fallbackLabel)
     if not response then
-        return fallbackLabel or "No data"
+        return fallbackLabel or addon.L.NO_DATA
     end
 
-    local statusText = addon.L[response.status] or response.status or "Unknown"
+    local statusText = addon.L[response.status] or response.status or addon.L.UNKNOWN
     local delta = response.delta or 0
     local deltaStr = ""
     
@@ -1952,7 +2233,32 @@ function addon:GetShortComparisonText(response, fallbackLabel)
     if response.reason and response.reason ~= "" then
         return string.format("%s | %s", combinedStatus, response.reason)
     end
+    if response.summary and response.summary ~= "" then
+        return string.format("%s | %s", combinedStatus, response.summary)
+    end
     return combinedStatus
+end
+
+function addon:GetOwnerPanelText(record)
+    if not record or record.ownerShort == self.playerName then
+        return nil, addon.L.WAITING
+    end
+
+    local ownerResponse = record.responses[record.ownerShort]
+    if ownerResponse then
+        return ownerResponse, self:GetShortComparisonText(ownerResponse, addon.L.NO_DATA)
+    end
+
+    ownerResponse = self:GetOwnerInspectResponse(record)
+    if ownerResponse then
+        return ownerResponse, self:GetShortComparisonText(ownerResponse, addon.L.NO_DATA_LOOTER)
+    end
+
+    if self:IsInspectPendingForPlayer(record.ownerShort) then
+        return nil, addon.L.WAITING
+    end
+
+    return nil, addon.L.NO_DATA_LOOTER
 end
 
 function addon:RefreshUI()
@@ -2000,7 +2306,7 @@ function addon:RefreshUI()
 
     local instDB = self.currentViewInstance and self.charDB.instances[self.currentViewInstance] or nil
     local history = instDB and instDB.lootHistory or {}
-    local instName = instDB and instDB.name or "Select Instance..."
+    local instName = instDB and instDB.name or addon.L.SELECT_INSTANCE
     
     self.frame.instanceDropBtn:SetText(instName)
 
@@ -2018,7 +2324,7 @@ function addon:RefreshUI()
             local localResponse = record.responses[self.playerName]
             local reason = localResponse and localResponse.reason or ""
             local status = localResponse and localResponse.status or ""
-            if status == "PASS" and (reason == "Class cannot equip it" or reason == "Class cannot equip this weapon" or reason == "Class cannot equip shields" or reason == "Wrong armor type" or reason == "Unknown weapon slot" or reason == "Not equippable" or reason == "Missing item" or reason == "Unknown slot") then
+            if status == "PASS" and isEquipabilityFailure(reason) then
                 include = false
             end
         end
@@ -2090,12 +2396,12 @@ function addon:RefreshUI()
             local localResponse = record.responses[self.playerName]
             local details = self:GetItemUiDetails(record.itemLink)
             local itemLabel = details.coloredName or details.name or record.itemName or ("item:" .. tostring(record.itemID))
-            local title = string.format("%s looted %s", ownerLabel, itemLabel)
+            local title = string.format(addon.L.LOOTED_BY, ownerLabel, itemLabel)
             local detailsParts = {}
-            if details.slotText and details.slotText ~= "Misc" then
+            if details.slotText and details.slotText ~= addon.L.MISC then
                 table.insert(detailsParts, details.slotText)
             end
-            if details.subtypeText and details.subtypeText ~= "Unknown type" then
+            if details.subtypeText and details.subtypeText ~= addon.L.UNKNOWN_TYPE then
                 table.insert(detailsParts, details.subtypeText)
             end
             if localResponse and localResponse.summary and localResponse.summary ~= "" then
@@ -2105,11 +2411,12 @@ function addon:RefreshUI()
             if whisperSummary then
                 table.insert(detailsParts, "|cff88ccff" .. whisperSummary .. "|r")
             end
-            local detail = table.concat(detailsParts, "  •  ")
-
             local ownerLine = nil
             local ownerResponse = nil
-            local tradableState = self:IsLootTradableByOwner(record)
+            local tradableState = self:GetLootTradableState(record)
+            local tradableText, tradableColor = getTradableLabel(tradableState)
+            table.insert(detailsParts, string.format("|cff%s%s|r", tradableColor, tradableText))
+            local detail = table.concat(detailsParts, "  " .. addon.L.META_SEPARATOR .. "  ")
             if record.ownerShort == self.playerName then
                 ownerLine = self:GetShortComparisonText(localResponse, addon.L.WAITING)
                 row.ownerPanel:Hide()
@@ -2117,11 +2424,7 @@ function addon:RefreshUI()
                 row.youPanel:SetPoint("TOPLEFT", row.statusArea, "TOPLEFT", 54, 0)
                 row.youPanel:SetSize(464, 28)
             else
-                ownerResponse = record.responses[record.ownerShort]
-                if not ownerResponse then
-                    ownerResponse = self:GetOwnerInspectResponse(record)
-                end
-                ownerLine = self:GetShortComparisonText(ownerResponse, addon.L.WAITING)
+                ownerResponse, ownerLine = self:GetOwnerPanelText(record)
                 row.ownerPanel:Show()
                 row.youPanel:ClearAllPoints()
                 row.youPanel:SetPoint("LEFT", row.ownerPanel, "RIGHT", 8, 0)
@@ -2163,10 +2466,10 @@ function addon:RefreshUI()
             end
             local wantsIt = localResponse and localResponse.status ~= "PASS"
             if wantsIt then
-                row.interestBtn:SetText("Pass")
+                row.interestBtn:SetText(addon.L.PASS)
                 row.interestBtn:SetVariant("muted")
             else
-                row.interestBtn:SetText("Need !")
+                row.interestBtn:SetText(addon.L.NEED)
                 row.interestBtn:SetVariant("positive")
             end
 
@@ -2179,15 +2482,17 @@ function addon:RefreshUI()
             row.rollBtn.record = record
             row.button.localResponse = localResponse
             row.rapidAskBtn.localResponse = localResponse
+            row.rollBtn.localResponse = localResponse
             row.itemKey = record.key
             row.instanceKey = self.currentViewInstance
             row.record = record
+            row.footerArea.record = record
             local fastRemaining = self:GetFastWhisperRemaining(record, record.owner)
 
             local whisperState = self:GetWhisperState(record, record.owner)
             if whisperState and whisperState.count and whisperState.count > 0 then
                 row.button:Disable()
-                row.button:SetText('✓')
+                row.button:SetText(addon.L.WHISPER_SENT_MARK)
                 row.rapidAskBtn:Disable()
                 row.rapidAskBtn:SetText(addon.L.WHISPERED)
             else
