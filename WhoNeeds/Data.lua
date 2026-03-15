@@ -179,11 +179,7 @@ end
 
 function addon:EnsureDatabase()
     if type(WhoNeedsDB) ~= "table" then
-        if type(INeedItDB) == "table" then
-            WhoNeedsDB = INeedItDB
-        else
-            WhoNeedsDB = {}
-        end
+        WhoNeedsDB = {}
     end
 
     copyDefaults(self.defaults, WhoNeedsDB)

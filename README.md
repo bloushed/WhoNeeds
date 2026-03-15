@@ -1,6 +1,6 @@
 # WhoNeeds
 
-Addon WoW Retail oriente raid qui observe `ENCOUNTER_LOOT_RECEIVED`, calcule si un item de boss est interessant pour la specialisation active et affiche les joueurs du groupe a qui l'objet semble convenir.
+Addon WoW Retail oriente groupe / raid qui observe `ENCOUNTER_LOOT_RECEIVED`, estime si un item de boss est interessant pour la specialisation active et aide a voir rapidement quoi garder, quoi demander et quoi ignorer.
 
 ## Ce que fait cette version
 
@@ -11,7 +11,10 @@ Addon WoW Retail oriente raid qui observe `ENCOUNTER_LOOT_RECEIVED`, calcule si 
 - Compare ce score avec l'equipement actuellement porte.
 - Marque un item en `BiS` si son `itemID` est enregistre pour la spe active.
 - Partage les interets des joueurs ayant aussi l'addon via `CHAT_MSG_ADDON`.
-- Affiche une fenetre avec le loot, les joueurs interesses et un bouton `Ask` qui envoie `Do you need it?` au looteur.
+- Affiche une fenetre de loot avec verdict visuel, filtres et actions rapides.
+- Permet d'utiliser `Need!`, `Roll`, `Fast MP` et `MP` directement depuis la ligne d'un item.
+- Memorise les whispers deja envoyes et applique un cooldown court sur `Fast MP`.
+- Separe l'historique des instances par personnage tout en gardant les parametres partages.
 - Peut charger des priorites de stats et listes BiS depuis un addon compagnon `WhoNeeds_Data`.
 
 ## Limites importantes
@@ -26,7 +29,7 @@ Addon WoW Retail oriente raid qui observe `ENCOUNTER_LOOT_RECEIVED`, calcule si 
 
 - `/whoneeds` : affiche ou masque la fenetre.
 - `/whoneeds data` : affiche l'etat du pack de donnees.
-- `/whoneeds msg <texte>` : change le message envoye par le bouton `Ask`.
+- `/whoneeds msg <texte>` : change le message utilise par `MP` et `Fast MP`.
 - `/whoneeds bis add <itemID>` : ajoute un item a la liste BiS de la spe actuelle.
 - `/whoneeds bis remove <itemID>` : retire un item de la liste BiS de la spe actuelle.
 
@@ -40,7 +43,7 @@ Addon WoW Retail oriente raid qui observe `ENCOUNTER_LOOT_RECEIVED`, calcule si 
 ## Structure du depot
 
 ```text
-INeedIt/
+WhoNeeds/
 |- WhoNeeds/
 |  |- WhoNeeds.toc
 |  |- Data.lua
@@ -60,6 +63,12 @@ INeedIt/
 - `WhoNeeds` contient la logique de scan, de scoring, l'UI et la communication de groupe.
 - `WhoNeeds_Data` contient les priorites de stats et les listes BiS.
 - Si `WhoNeeds_Data` manque, `WhoNeeds` affiche un message explicatif et continue en mode fallback.
+
+## Stockage
+
+- `WhoNeedsDB` contient les options partagees entre tes personnages.
+- `WhoNeedsCharDB` contient l'historique des instances et l'etat de vue par personnage.
+- Les filtres et preferences restent communs, mais les loots affiches ne sont plus partages entre tes rerolls.
 
 ## D'ou viennent les donnees
 
