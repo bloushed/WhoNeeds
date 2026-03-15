@@ -9,6 +9,7 @@ addon.name = addonName
 addon.prefix = "WhoNeedsV1"
 addon.playerName = nil
 addon.db = nil
+addon.charDB = nil
 addon.lootByKey = {}
 addon.peerProfiles = {}
 addon.localProfile = {}
@@ -21,6 +22,9 @@ addon.inspectCacheByName = {}
 addon.pendingInspect = nil
 addon.inspectTimeout = nil
 addon.hasUnreadLoot = false
+addon.whisperCooldownTimers = {}
+addon.pendingEncounterLoot = nil
+addon.pendingEncounterLootTimer = nil
 
 addon.constants = {
     slotNames = {
@@ -136,6 +140,10 @@ addon.defaults = {
         },
         minUpgrade = 3,
         majorUpgrade = 12,
+        fastWhisperCooldown = 10,
+        filterUsableOnly = true,
+        filterOwnDrops = true,
+        filterTradableOnly = false,
         autoOpen = true,
         minimap = {
             angle = 225,
@@ -147,6 +155,13 @@ addon.defaults = {
     },
     specWeights = {},
     bis = {},
+}
+
+addon.charDefaults = {
+    instances = {},
+    state = {
+        lastViewInstance = nil,
+    },
 }
 
 local function copyDefaults(source, target)
@@ -173,14 +188,32 @@ function addon:EnsureDatabase()
 
     copyDefaults(self.defaults, WhoNeedsDB)
     self.db = WhoNeedsDB
+    
+    if type(WhoNeedsCharDB) ~= "table" then
+        WhoNeedsCharDB = {}
+    end
+    copyDefaults(self.charDefaults, WhoNeedsCharDB)
+    self.charDB = WhoNeedsCharDB
 
-    self.db.instances = self.db.instances or {}
+    if type(self.db.instances) == "table" and next(self.db.instances) ~= nil and (not self.charDB.instances or next(self.charDB.instances) == nil) then
+        self.charDB.instances = self.db.instances
+        self.db.instances = nil
+    end
+
+    if self.db.options and self.db.options.lastViewInstance and not self.charDB.state.lastViewInstance then
+        self.charDB.state.lastViewInstance = self.db.options.lastViewInstance
+        self.db.options.lastViewInstance = nil
+    end
+
+    self.charDB.instances = self.charDB.instances or {}
+    self.charDB.state = self.charDB.state or {}
     self:RebuildLootIndex()
 end
 
 function addon:RebuildLootIndex()
     self.lootByKey = {}
-    for instKey, instDB in pairs(self.db.instances) do
+    local instances = self.charDB and self.charDB.instances or {}
+    for instKey, instDB in pairs(instances) do
         if type(instDB) == "table" then
             instDB.loots = instDB.loots or {}
             instDB.lootHistory = instDB.lootHistory or {}
@@ -325,7 +358,7 @@ function addon:GetCurrentInstanceKey()
 end
 
 function addon:UpdateCurrentInstance()
-    if not self.db or not self.db.instances then return end
+    if not self.charDB or not self.charDB.instances then return end
     
     local name, instanceType, difficultyID, difficultyName = GetInstanceInfo()
     if instanceType == "none" then
@@ -338,7 +371,7 @@ function addon:UpdateCurrentInstance()
 
     local instanceKey, instanceName = self:GetCurrentInstanceKey()
     
-    self.db.instances[instanceKey] = self.db.instances[instanceKey] or {
+    self.charDB.instances[instanceKey] = self.charDB.instances[instanceKey] or {
         name = instanceName,
         loots = {},
         lootHistory = {}
@@ -347,8 +380,8 @@ function addon:UpdateCurrentInstance()
     if self.currentViewInstance ~= instanceKey then
         self.currentViewInstance = instanceKey
         self.currentPage = 1
-        if self.db.options then
-            self.db.options.lastViewInstance = instanceKey
+        if self.charDB.state then
+            self.charDB.state.lastViewInstance = instanceKey
         end
         if self.frame and self.frame:IsShown() then
             self:RefreshUI()
@@ -357,7 +390,7 @@ function addon:UpdateCurrentInstance()
 end
 
 function addon:SortInstanceLootHistory(instanceKey)
-    local instDB = self.db.instances[instanceKey]
+    local instDB = self.charDB and self.charDB.instances and self.charDB.instances[instanceKey]
     if not instDB then return end
     table.sort(instDB.lootHistory, function(left, right)
         return (left.timestamp or 0) > (right.timestamp or 0)
@@ -365,7 +398,7 @@ function addon:SortInstanceLootHistory(instanceKey)
 end
 
 function addon:PruneInstanceLootHistory(instanceKey)
-    local instDB = self.db.instances[instanceKey]
+    local instDB = self.charDB and self.charDB.instances and self.charDB.instances[instanceKey]
     if not instDB then return end
     -- Keep up to 200 items per instance to prevent massive DBs, but enough for a full run
     while #instDB.lootHistory > 200 do
@@ -385,13 +418,13 @@ function addon:GetOrCreateLootRecord(key, payload)
         instanceName = payload.forceInstanceName or instanceKey
     end
 
-    self.db.instances[instanceKey] = self.db.instances[instanceKey] or {
+    self.charDB.instances[instanceKey] = self.charDB.instances[instanceKey] or {
         name = instanceName,
         loots = {},
         lootHistory = {}
     }
     
-    local instDB = self.db.instances[instanceKey]
+    local instDB = self.charDB.instances[instanceKey]
     local record = instDB.loots[key]
     
     if record then
@@ -411,6 +444,7 @@ function addon:GetOrCreateLootRecord(key, payload)
         quantity = payload.quantity or 1,
         responses = {},
         localInterest = nil,
+        whisperHistory = {},
     }
 
     table.insert(instDB.lootHistory, 1, record)
@@ -435,7 +469,7 @@ function addon:GetColoredName(name, classFile)
 end
 
 function addon:DeleteLootRecord(instanceKey, lootKey)
-    local instDB = self.db.instances[instanceKey]
+    local instDB = self.charDB and self.charDB.instances and self.charDB.instances[instanceKey]
     if not instDB then return end
 
     instDB.loots[lootKey] = nil
@@ -452,11 +486,11 @@ function addon:DeleteLootRecord(instanceKey, lootKey)
 end
 
 function addon:DeleteInstance(instanceKey)
-    if self.db.instances[instanceKey] then
-        for key, _ in pairs(self.db.instances[instanceKey].loots) do
+    if self.charDB and self.charDB.instances and self.charDB.instances[instanceKey] then
+        for key, _ in pairs(self.charDB.instances[instanceKey].loots) do
             self.lootByKey[key] = nil
         end
-        self.db.instances[instanceKey] = nil
+        self.charDB.instances[instanceKey] = nil
     end
     if self.currentViewInstance == instanceKey then
         self.currentViewInstance = nil
@@ -480,6 +514,125 @@ end
 
 function addon:MarkLootSeen()
     self:SetUnreadLoot(false)
+end
+
+function addon:GetGroupMemberSnapshot()
+    local members = {}
+    local seen = {}
+
+    local function addUnit(unit)
+        if not unit or not UnitExists(unit) then
+            return
+        end
+
+        local fullName = self:GetFullPlayerName(unit) or UnitName(unit)
+        local shortName = self:ShortName(fullName)
+        if shortName and shortName ~= "" and not seen[shortName] then
+            seen[shortName] = true
+            table.insert(members, shortName)
+        end
+    end
+
+    addUnit("player")
+    for _, unit in ipairs(self:GetGroupUnitTokens()) do
+        addUnit(unit)
+    end
+
+    return members, seen
+end
+
+function addon:ClearPendingEncounterLoot()
+    if self.pendingEncounterLootTimer and self.pendingEncounterLootTimer.Cancel then
+        self.pendingEncounterLootTimer:Cancel()
+    end
+    self.pendingEncounterLootTimer = nil
+    self.pendingEncounterLoot = nil
+    if self.RefreshUI then
+        self:RefreshUI()
+    end
+end
+
+function addon:SchedulePendingEncounterLootClear(delaySeconds)
+    if self.pendingEncounterLootTimer and self.pendingEncounterLootTimer.Cancel then
+        self.pendingEncounterLootTimer:Cancel()
+    end
+
+    if not C_Timer or not C_Timer.NewTimer then
+        self.pendingEncounterLootTimer = nil
+        return
+    end
+
+    self.pendingEncounterLootTimer = C_Timer.NewTimer(delaySeconds or 15, function()
+        addon.pendingEncounterLootTimer = nil
+        addon.pendingEncounterLoot = nil
+        addon:RefreshUI()
+    end)
+end
+
+function addon:StartPendingEncounterLoot(encounterID, encounterName)
+    local members, memberSet = self:GetGroupMemberSnapshot()
+    self.pendingEncounterLoot = {
+        encounterID = encounterID,
+        encounterName = encounterName,
+        members = members,
+        memberSet = memberSet,
+        looters = {},
+        total = #members,
+        startedAt = GetTime(),
+        lastUpdateAt = GetTime(),
+    }
+    self:SchedulePendingEncounterLootClear(20)
+    if self.RefreshUI then
+        self:RefreshUI()
+    end
+end
+
+function addon:MarkPendingEncounterLooter(playerName)
+    local state = self.pendingEncounterLoot
+    if not state or not playerName or playerName == "" then
+        return
+    end
+
+    local shortName = self:ShortName(playerName)
+    if not shortName or shortName == "" then
+        return
+    end
+
+    if state.memberSet and not state.memberSet[shortName] then
+        state.memberSet[shortName] = true
+        table.insert(state.members, shortName)
+        state.total = #state.members
+    end
+
+    state.looters[shortName] = true
+    state.lastUpdateAt = GetTime()
+
+    local remaining = self:GetPendingEncounterLootRemaining()
+    if remaining and remaining <= 0 then
+        self:SchedulePendingEncounterLootClear(4)
+    else
+        self:SchedulePendingEncounterLootClear(20)
+    end
+
+    if self.RefreshUI then
+        self:RefreshUI()
+    end
+end
+
+function addon:GetPendingEncounterLootRemaining()
+    local state = self.pendingEncounterLoot
+    if not state or not state.members then
+        return nil
+    end
+
+    local remaining = 0
+    for _, shortName in ipairs(state.members) do
+        if not state.looters[shortName] then
+            remaining = remaining + 1
+        end
+    end
+
+    return remaining, state.total, state
 end
 
 function addon:GetGroupUnitTokens()

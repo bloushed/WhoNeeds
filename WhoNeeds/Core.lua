@@ -231,6 +231,7 @@ function addon:HandleLoot(encounterID, itemID, itemLink, quantity, playerName, c
         classFile = classFileName,
     }
     if not (options and options.simulated) then
+        self:MarkPendingEncounterLooter(ownerName)
         local ownerUnit = self:ResolveGroupUnitByName(ownerName)
         if ownerUnit then
             self:QueueInspectUnit(ownerUnit, true)
@@ -372,6 +373,124 @@ function addon:FormatWhisperTemplate(template, record, response)
     return message
 end
 
+function addon:GetWhisperTargetKey(target)
+    return self:ShortName(target)
+end
+
+function addon:GetWhisperState(record, target)
+    if type(record) ~= "table" or not target or target == "" then
+        return nil
+    end
+
+    record.whisperHistory = type(record.whisperHistory) == "table" and record.whisperHistory or {}
+    return record.whisperHistory[self:GetWhisperTargetKey(target)]
+end
+
+function addon:GetFastWhisperCooldown()
+    local configured = self.db and self.db.options and tonumber(self.db.options.fastWhisperCooldown)
+    if configured and configured >= 5 and configured <= 10 then
+        return configured
+    end
+    return 10
+end
+
+function addon:GetFastWhisperRemaining(record, target)
+    local state = self:GetWhisperState(record, target)
+    if not state or not state.lastSentAt then
+        return 0
+    end
+
+    local remaining = self:GetFastWhisperCooldown() - (GetTime() - state.lastSentAt)
+    if remaining < 0 then
+        return 0
+    end
+    return remaining
+end
+
+function addon:GetWhisperSummary(record, target)
+    local state = self:GetWhisperState(record, target)
+    if not state or not state.count or state.count <= 0 then
+        return nil
+    end
+
+    local text = string.format(self.L.WHISPER_SENT_COUNT, state.count)
+    local remaining = self:GetFastWhisperRemaining(record, target)
+    if remaining > 0 then
+        text = text .. " - " .. string.format(self.L.FAST_ASK_WAIT, math.ceil(remaining))
+    end
+    return text
+end
+
+function addon:RecordWhisper(record, target, message, isFast)
+    if type(record) ~= "table" or not target or target == "" then
+        return
+    end
+
+    record.whisperHistory = type(record.whisperHistory) == "table" and record.whisperHistory or {}
+
+    local key = self:GetWhisperTargetKey(target)
+    local state = record.whisperHistory[key] or {
+        count = 0,
+    }
+
+    state.count = (state.count or 0) + 1
+    state.lastSentAt = GetTime()
+    state.lastMessage = message
+    state.lastTarget = target
+    state.lastMethod = isFast and "FAST" or "MENU"
+
+    record.whisperHistory[key] = state
+end
+
+function addon:ScheduleFastWhisperRefresh(record, target)
+    if not record or not record.key or not target then
+        return
+    end
+
+    self.whisperCooldownTimers = self.whisperCooldownTimers or {}
+
+    local timerKey = record.key .. ":" .. self:GetWhisperTargetKey(target)
+    local existing = self.whisperCooldownTimers[timerKey]
+    if existing and existing.Cancel then
+        existing:Cancel()
+    end
+
+    local remaining = self:GetFastWhisperRemaining(record, target)
+    if remaining <= 0 or not C_Timer or not C_Timer.NewTimer then
+        self.whisperCooldownTimers[timerKey] = nil
+        return
+    end
+
+    self.whisperCooldownTimers[timerKey] = C_Timer.NewTimer(remaining + 0.05, function()
+        addon.whisperCooldownTimers[timerKey] = nil
+        addon:RefreshUI()
+    end)
+end
+
+function addon:SendLootWhisper(target, record, message, isFast)
+    if not target or target == "" or not record or not message or message == "" then
+        return false
+    end
+
+    local remaining = isFast and self:GetFastWhisperRemaining(record, target) or 0
+    if remaining > 0 then
+        print(string.format("|cff33ff99WhoNeeds|r " .. self.L.FAST_ASK_BLOCKED, math.ceil(remaining)))
+        self:RefreshUI()
+        return false
+    end
+
+    SendChatMessage(message, "WHISPER", nil, target)
+    self:RecordWhisper(record, target, message, isFast)
+
+    if isFast then
+        print("|cff33ff99WhoNeeds|r Sent to " .. target .. ": " .. message)
+    end
+    self:ScheduleFastWhisperRefresh(record, target)
+
+    self:RefreshUI()
+    return true
+end
+
 function addon:GetOwnerInspectResponse(record)
     local cache = self.inspectCacheByName[record.ownerShort]
     if not cache or not record.itemLink then
@@ -426,6 +545,86 @@ function addon:GetOwnerInspectResponse(record)
         baselineItemID = baseline and baseline.itemID or nil,
         baselineItemLevel = baseline and baseline.itemLevel or nil,
     }
+end
+
+function addon:GetTradeReferenceFromGear(equipLoc, gearMap)
+    local slots = self.constants.equipLocToSlots[equipLoc]
+    if not slots or not gearMap then
+        return nil
+    end
+
+    local function getSlot(slotID)
+        return gearMap[slotID]
+    end
+
+    if equipLoc == "INVTYPE_FINGER" or equipLoc == "INVTYPE_TRINKET" or equipLoc == "INVTYPE_WEAPON" then
+        local first = getSlot(slots[1])
+        local second = getSlot(slots[2])
+        if not first and not second then
+            return nil
+        end
+        if not first then
+            return second
+        end
+        if not second then
+            return first
+        end
+        if (first.itemLevel or 0) >= (second.itemLevel or 0) then
+            return first
+        end
+        return second
+    end
+
+    if equipLoc == "INVTYPE_2HWEAPON" then
+        local mainHand = getSlot(16)
+        local offHand = getSlot(17)
+        if not mainHand and not offHand then
+            return nil
+        end
+        if not mainHand then
+            return offHand
+        end
+        if not offHand then
+            return mainHand
+        end
+        if (mainHand.itemLevel or 0) >= (offHand.itemLevel or 0) then
+            return mainHand
+        end
+        return offHand
+    end
+
+    return getSlot(slots[1])
+end
+
+function addon:IsLootTradableByOwner(record)
+    if not record or not record.itemLink then
+        return nil
+    end
+
+    local _, _, _, equipLoc = GetItemInfoInstant(record.itemLink)
+    if not equipLoc or equipLoc == "" then
+        return nil
+    end
+
+    local itemLevel = self:GetDetailedItemLevel(record.itemLink)
+    if record.ownerShort == self.playerName then
+        local equipped = self:GetTradeReferenceFromGear(equipLoc, self.localGear)
+        if not equipped then
+            return nil
+        end
+        return (equipped.itemLevel or 0) >= itemLevel
+    end
+
+    local cache = self.inspectCacheByName[record.ownerShort]
+    if not cache or not cache.gear then
+        return nil
+    end
+
+    local equipped = self:GetTradeReferenceFromGear(equipLoc, cache.gear)
+    if not equipped then
+        return nil
+    end
+    return (equipped.itemLevel or 0) >= itemLevel
 end
 
 function addon:HandleSlashCommand(text)
@@ -552,6 +751,24 @@ function addon:OnEvent(event, ...)
         return
     end
 
+    if event == "ENCOUNTER_START" then
+        self:ClearPendingEncounterLoot()
+        return
+    end
+
+    if event == "ENCOUNTER_END" then
+        local encounterID, encounterName, _, _, success = ...
+        if success == 1 then
+            self:StartPendingEncounterLoot(encounterID, encounterName)
+            if self.db and self.db.options and self.db.options.autoOpen then
+                self:ShowLootWindow()
+            end
+        else
+            self:ClearPendingEncounterLoot()
+        end
+        return
+    end
+
     if event == "CHAT_MSG_ADDON" then
         local prefix, message, _, sender = ...
         if prefix == self.prefix then
@@ -581,6 +798,8 @@ eventFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 eventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
 eventFrame:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
 eventFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
+eventFrame:RegisterEvent("ENCOUNTER_START")
+eventFrame:RegisterEvent("ENCOUNTER_END")
 eventFrame:RegisterEvent("CHAT_MSG_ADDON")
 eventFrame:RegisterEvent("INSPECT_READY")
 eventFrame:RegisterEvent("ENCOUNTER_LOOT_RECEIVED")

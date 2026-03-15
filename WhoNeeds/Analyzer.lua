@@ -4,6 +4,33 @@ local addon = ns and ns.Addon or _G.WhoNeeds
 local WEAPON_CLASS_ID = 2
 local ARMOR_CLASS_ID = 4
 local SHIELD_SUBCLASS_ID = 6
+local BOW_SUBCLASS_ID = 2
+local GUN_SUBCLASS_ID = 3
+local CROSSBOW_SUBCLASS_ID = 18
+local WAND_SUBCLASS_ID = 19
+local WARGLAIVE_SUBCLASS_ID = 9
+
+local allowedWeaponSubclassesByClass = {
+    DEATHKNIGHT = { [0] = true, [1] = true, [4] = true, [5] = true, [6] = true, [7] = true, [8] = true },
+    DEMONHUNTER = { [0] = true, [7] = true, [9] = true, [13] = true },
+    DRUID = { [4] = true, [10] = true, [13] = true, [15] = true },
+    EVOKER = { [4] = true, [10] = true, [15] = true },
+    HUNTER = { [0] = true, [1] = true, [2] = true, [3] = true, [6] = true, [7] = true, [8] = true, [10] = true, [13] = true, [18] = true },
+    MAGE = { [7] = true, [10] = true, [15] = true, [19] = true },
+    MONK = { [0] = true, [4] = true, [6] = true, [7] = true, [10] = true, [13] = true },
+    PALADIN = { [0] = true, [1] = true, [4] = true, [5] = true, [6] = true, [7] = true, [8] = true },
+    PRIEST = { [4] = true, [10] = true, [15] = true, [19] = true },
+    ROGUE = { [0] = true, [4] = true, [7] = true, [13] = true, [15] = true },
+    SHAMAN = { [0] = true, [4] = true, [6] = true, [7] = true, [8] = true, [10] = true, [13] = true },
+    WARLOCK = { [7] = true, [10] = true, [15] = true, [19] = true },
+    WARRIOR = { [0] = true, [1] = true, [4] = true, [5] = true, [6] = true, [7] = true, [8] = true, [10] = true, [13] = true },
+}
+
+local shieldClasses = {
+    PALADIN = true,
+    SHAMAN = true,
+    WARRIOR = true,
+}
 
 local primaryStatTokens = {
     [LE_UNIT_STAT_STRENGTH or 1] = "STRENGTH",
@@ -245,6 +272,9 @@ function addon:IsPrimaryArmorMatch(itemLink, profile)
     end
 
     if itemSubClassID == SHIELD_SUBCLASS_ID then
+        if not profile or not shieldClasses[profile.classFile] then
+            return false, "Class cannot equip shields"
+        end
         return true
     end
 
@@ -257,6 +287,15 @@ function addon:IsPrimaryArmorMatch(itemLink, profile)
     end
 
     return true
+end
+
+function addon:CanProfileUseWeaponSubclass(profile, itemSubClassID)
+    if not profile or not profile.classFile or itemSubClassID == nil then
+        return false
+    end
+
+    local allowed = allowedWeaponSubclassesByClass[profile.classFile]
+    return type(allowed) == "table" and allowed[itemSubClassID] == true
 end
 
 function addon:CanProfileUseItem(itemLink, profile)
@@ -285,6 +324,17 @@ function addon:CanProfileUseItem(itemLink, profile)
     if itemClassID == WEAPON_CLASS_ID and (not equipLoc or equipLoc == "") then
         debugEquipCheck("CanProfileUseItem", itemLink, profile, equipLoc, itemClassID, itemSubClassID, "Unknown weapon slot")
         return false, "Unknown weapon slot"
+    end
+
+    if itemClassID == WEAPON_CLASS_ID and not self:CanProfileUseWeaponSubclass(profile, itemSubClassID) then
+        local reason = "Class cannot equip this weapon"
+        if itemSubClassID == WAND_SUBCLASS_ID then
+            reason = "Class cannot equip it"
+        elseif itemSubClassID == BOW_SUBCLASS_ID or itemSubClassID == GUN_SUBCLASS_ID or itemSubClassID == CROSSBOW_SUBCLASS_ID or itemSubClassID == WARGLAIVE_SUBCLASS_ID then
+            reason = "Class cannot equip this weapon"
+        end
+        debugEquipCheck("CanProfileUseItem", itemLink, profile, equipLoc, itemClassID, itemSubClassID, reason)
+        return false, reason
     end
 
     return true

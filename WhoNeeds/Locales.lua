@@ -13,13 +13,18 @@ local locales = {
         SIM_BUTTON = "Sim Loot",
         SELECT_INSTANCE = "Select Instance...",
         DELETE_INSTANCE = "Delete Instance",
+        INSTANCE_SECTION = "Instance",
+        FILTERS_SECTION = "Filters",
         USABLE_ONLY = "Usable only",
         OWN_DROPS = "Own drops",
+        TRADABLE_ONLY = "Tradable only",
         PAGE = "Page %d / %d",
         PREVIOUS = "Previous",
         NEXT = "Next",
         ASK_BUTTON = "MP",
         FAST_ASK = "Fast MP",
+        ROLL = "Roll",
+        ROLL_ANNOUNCE = "Rolling for %s",
         NEED = "Need!",
         PASS = "Pass",
         YOU = "You",
@@ -37,13 +42,28 @@ local locales = {
         LANGUAGE = "Language:",
         AUTO_OPEN = "Open on boss loot",
         AUTO_OPEN_DESC = "Automatically open the addon when a boss loot drops in a group.",
-        
+        WHISPERED = "Message sent",
+        ASK_AGAIN = "Re-MP",
+        WHISPER_SENT_COUNT = "MP sent x%d",
+        FAST_ASK_WAIT = "Fast MP %ds",
+        FAST_ASK_BLOCKED = "Fast MP is on cooldown for %ds.",
+        VERDICT_ASK_NOW = "GOOD FOR YOU",
+        VERDICT_MAYBE_ASK = "GOOD FOR YOU",
+        VERDICT_OWNER_NEEDS = "GOOD FOR YOU",
+        VERDICT_WAIT_OWNER = "GOOD FOR YOU",
+        VERDICT_NOT_FOR_YOU = "NOT FOR YOU",
+        VERDICT_NOT_TRADABLE = "GOOD FOR YOU",
+        VERDICT_KEEP = "KEEP",
+        VERDICT_BIS = "BIS",
+        VERDICT_MAYBE_KEEP = "OK",
+        VERDICT_PASS = "NOT FOR YOU",
+
         -- Status
         BIS = "BiS",
         UPGRADE = "Upgrade",
         SIDEGRADE = "Sidegrade",
         PASS_STATUS = "Pass",
-        
+
         -- Reasons
         REASON_CLASS_WEAP = "Class cannot equip this weapon",
         REASON_CLASS_SHIELD = "Class cannot equip shields",
@@ -54,7 +74,7 @@ local locales = {
         REASON_MISSING = "Missing item",
         REASON_UNKNOWN_SLOT = "Unknown slot",
         REASON_LOWER_ILVL = "Lower item level",
-        
+
         -- Stats
         CRIT = "Crit",
         HASTE = "Haste",
@@ -68,21 +88,26 @@ local locales = {
     frFR = {
         LOOTS = "Butin",
         SIMULATIONS = "Simulations",
-        SETTINGS = "Paramètres",
+        SETTINGS = "Parametres",
         EMPTY_LOOT = "Aucun butin de boss pour le moment.",
         SIMULATION_LABEL = "Simulation",
-        SIMULATION_HINT = "Collez le lien complet (Shift+Clic) pour une précision parfaite. L'owner est optionnel.",
-        FORCE_INTEREST = "Forcer l'intérêt (tests)",
+        SIMULATION_HINT = "Collez le lien complet (Shift+Clic) pour une precision parfaite. L'owner est optionnel.",
+        FORCE_INTEREST = "Forcer l'interet (tests)",
         SIM_BUTTON = "Simuler",
-        SELECT_INSTANCE = "Sélectionner l'instance...",
+        SELECT_INSTANCE = "Selectionner l'instance...",
         DELETE_INSTANCE = "Supprimer",
-        USABLE_ONLY = "Équipable uniq.",
+        INSTANCE_SECTION = "Instance",
+        FILTERS_SECTION = "Filtres",
+        USABLE_ONLY = "Equipable",
         OWN_DROPS = "Mes loots",
+        TRADABLE_ONLY = "Echangeable",
         PAGE = "Page %d / %d",
-        PREVIOUS = "Précédent",
+        PREVIOUS = "Precedent",
         NEXT = "Suivant",
         ASK_BUTTON = "MP",
         FAST_ASK = "Fast MP",
+        ROLL = "Roll",
+        ROLL_ANNOUNCE = "Rolling for %s",
         NEED = "Besoin !",
         PASS = "Pass",
         YOU = "Vous",
@@ -92,47 +117,61 @@ local locales = {
         UNKNOWN_TYPE = "Type inconnu",
         MISC = "Divers",
         SCORE = "Score: ",
-        INTERESTED = "Intéressé(s): ",
+        INTERESTED = "Interesse(s): ",
         NOBODY_YET = "personne",
-        ASK_TOOLTIP = "Sélectionnez un message à envoyer formellement à %s.",
+        ASK_TOOLTIP = "Selectionnez un message a envoyer a %s.",
         FAST_ASK_TITLE = "Messages 'Demande Rapide'",
-        FAST_ASK_DESC = "Cochez la phrase à envoyer directement via le bouton de Demande Rapide.\nÉditez les lignes de textes ci-dessous pour personnaliser vos phrases.",
+        FAST_ASK_DESC = "Cochez la phrase a envoyer directement via le bouton de Demande Rapide.\nEditez les lignes de textes ci-dessous pour personnaliser vos phrases.",
         LANGUAGE = "Langue :",
         AUTO_OPEN = "Ouverture auto.",
         AUTO_OPEN_DESC = "Ouvrir l'addon automatiquement lors d'un loot de boss en groupe.",
-        
+        WHISPERED = "Message envoye",
+        ASK_AGAIN = "Re-MP",
+        WHISPER_SENT_COUNT = "MP envoye x%d",
+        FAST_ASK_WAIT = "Fast MP %ds",
+        FAST_ASK_BLOCKED = "Fast MP bloque pendant %ds.",
+        VERDICT_ASK_NOW = "BIEN POUR TOI",
+        VERDICT_MAYBE_ASK = "BIEN POUR TOI",
+        VERDICT_OWNER_NEEDS = "BIEN POUR TOI",
+        VERDICT_WAIT_OWNER = "BIEN POUR TOI",
+        VERDICT_NOT_FOR_YOU = "PAS POUR TOI",
+        VERDICT_NOT_TRADABLE = "BIEN POUR TOI",
+        VERDICT_KEEP = "GARDE",
+        VERDICT_BIS = "BIS",
+        VERDICT_MAYBE_KEEP = "CORRECT",
+        VERDICT_PASS = "PAS POUR TOI",
+
         -- Status
         BIS = "BiS",
-        UPGRADE = "Amélioration",
+        UPGRADE = "Amelioration",
         SIDEGRADE = "Alternatif",
         PASS_STATUS = "Pass",
-        
+
         -- Reasons
         REASON_CLASS_WEAP = "Classe incompatible (arme)",
         REASON_CLASS_SHIELD = "Classe incompatible (bouclier)",
         REASON_CLASS_ARMOR = "Classe incompatible (armure)",
         REASON_WRONG_ARMOR = "Mauvais type d'armure",
         REASON_UNKNOWN_WEAP = "Slot d'arme inconnu",
-        REASON_NOT_EQUIPPABLE = "Non équipable",
+        REASON_NOT_EQUIPPABLE = "Non equipable",
         REASON_MISSING = "Item introuvable",
         REASON_UNKNOWN_SLOT = "Slot inconnu",
         REASON_LOWER_ILVL = "iLvl trop bas",
-        
+
         -- Stats
         CRIT = "Crit",
-        HASTE = "Hâte",
-        MASTERY = "Maîtrise",
+        HASTE = "Hate",
+        MASTERY = "Maitrise",
         VERS = "Poly.",
         STAMINA = "Endurance",
         STRENGTH = "Force",
-        AGILITY = "Agilité",
+        AGILITY = "Agilite",
         INTELLECT = "Intelligence",
     }
 }
 
 addon.L = setmetatable({}, {
-    __index = function(t, key)
-        -- Fallback chain: locale user set -> WoW Client locale -> enUS -> empty string
+    __index = function(_, key)
         local lang = addon.db and addon.db.options and addon.db.options.language
         if not lang or lang == "AUTO" then
             lang = GetLocale()
@@ -140,10 +179,10 @@ addon.L = setmetatable({}, {
         if not locales[lang] then
             lang = "enUS"
         end
-        
+
         local text = locales[lang][key]
         if not text then
-            text = locales["enUS"][key] or key
+            text = locales.enUS[key] or key
         end
         return text
     end
