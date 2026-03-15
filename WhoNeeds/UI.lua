@@ -6,6 +6,17 @@ local MINIMAP_ICON = "Interface\\AddOns\\WhoNeeds\\Media\\WhoNeedsIcon"
 local LOOT_ROW_HEIGHT = 116
 local LOOT_ROW_STEP = 124
 
+local function isEquipabilityFailure(reason)
+    return reason == addon.L.REASON_CLASS_ARMOR
+        or reason == addon.L.REASON_CLASS_WEAP
+        or reason == addon.L.REASON_CLASS_SHIELD
+        or reason == addon.L.REASON_WRONG_ARMOR
+        or reason == addon.L.REASON_UNKNOWN_WEAP
+        or reason == addon.L.REASON_NOT_EQUIPPABLE
+        or reason == addon.L.REASON_MISSING
+        or reason == addon.L.REASON_UNKNOWN_SLOT
+end
+
 local function setStatusPanelColor(texture, response)
     if not texture then
         return
@@ -14,7 +25,7 @@ local function setStatusPanelColor(texture, response)
     local status = response and response.status or nil
     local reason = response and response.reason or ""
 
-    if status == "PASS" and (reason == "Class cannot equip it" or reason == "Class cannot equip this weapon" or reason == "Class cannot equip shields" or reason == "Wrong armor type" or reason == "Unknown weapon slot" or reason == "Not equippable" or reason == "Missing item" or reason == "Unknown slot") then
+    if status == "PASS" and isEquipabilityFailure(reason) then
         texture:SetColorTexture(0.35, 0.05, 0.05, 0.92)
         return
     end
@@ -743,13 +754,13 @@ local function createAskMenu()
 
     frame.title = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
     frame.title:SetPoint("CENTER", frame.headerBg, "CENTER", 0, 0)
-    frame.title:SetText("Ask...")
+    frame.title:SetText(addon.L.ASK_MENU_TITLE)
 
     frame.subtitle = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     frame.subtitle:SetPoint("TOPLEFT", 16, -32)
     frame.subtitle:SetPoint("TOPRIGHT", -16, -32)
     frame.subtitle:SetJustifyH("LEFT")
-    frame.subtitle:SetText("Choose a whisper to send.")
+    frame.subtitle:SetText(addon.L.ASK_MENU_SUBTITLE)
 
     frame.buttons = {}
     for index = 1, 10 do
@@ -1334,7 +1345,7 @@ function addon:CreateUI()
 
     frame.pageText = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
     frame.pageText:SetPoint("BOTTOM", frame, "BOTTOM", 0, 16)
-    frame.pageText:SetText("Page 1 / 1")
+    frame.pageText:SetText(string.format(addon.L.PAGE, 1, 1))
     
     frame.prevBtn = createModernButton(frame, 80, 22, addon.L.PREVIOUS, "muted")
     frame.prevBtn:SetSize(80, 22)
@@ -1414,9 +1425,13 @@ function addon:CreateUI()
     
     local function updateLangBtnText()
         local lopt = addon.db and addon.db.options and addon.db.options.language or "AUTO"
-        if lopt == "frFR" then langDropBtn:SetText("Français")
-        elseif lopt == "enUS" then langDropBtn:SetText("English")
-        else langDropBtn:SetText("Auto (Client)") end
+        if lopt == "frFR" then
+            langDropBtn:SetText(addon.L.LANGUAGE_FRENCH)
+        elseif lopt == "enUS" then
+            langDropBtn:SetText(addon.L.LANGUAGE_ENGLISH)
+        else
+            langDropBtn:SetText(addon.L.LANGUAGE_AUTO)
+        end
     end
     updateLangBtnText()
     
@@ -1439,7 +1454,11 @@ function addon:CreateUI()
             lm.scrollFrame:SetScrollChild(lm.scrollChild)
             styleModernScrollBar(lm.scrollFrame)
             
-            local opts = { {k="AUTO", v="Auto (Client)"}, {k="enUS", v="English"}, {k="frFR", v="Français"} }
+            local opts = {
+                { k = "AUTO", v = addon.L.LANGUAGE_AUTO },
+                { k = "enUS", v = addon.L.LANGUAGE_ENGLISH },
+                { k = "frFR", v = addon.L.LANGUAGE_FRENCH },
+            }
             local yOffs = -4
             for i, opt in ipairs(opts) do
                 local b = createModernButton(lm.scrollChild, 140, 24, opt.v, "muted")
@@ -1717,7 +1736,7 @@ local function createInstanceMenu()
 
     frame.title = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
     frame.title:SetPoint("CENTER", frame.headerBg, "CENTER", 0, 0)
-    frame.title:SetText("Select Instance")
+    frame.title:SetText(addon.L.SELECT_INSTANCE_TITLE)
 
     frame.subtitle = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     frame.subtitle:SetPoint("TOPLEFT", frame.title, "BOTTOMLEFT", 0, -6)
@@ -1767,7 +1786,7 @@ function addon:ShowInstanceMenu(anchor)
             menu.buttons[i] = btn
         end
         
-        btn:SetText(" " .. (inst.name or "Unknown"))
+        btn:SetText(" " .. (inst.name or addon.L.UNKNOWN))
         btn.instanceKey = inst.key
         btn:SetPoint("TOPLEFT", 8, yOffset)
         btn:SetScript("OnClick", function(self)
@@ -1869,16 +1888,16 @@ function addon:GetItemUiDetails(itemLink)
         return {
             icon = nil,
             coloredName = nil,
-            slotText = "Unknown slot",
-            subtypeText = "Unknown type",
+            slotText = addon.L.UNKNOWN_SLOT,
+            subtypeText = addon.L.UNKNOWN_TYPE,
         }
     end
 
     local itemID = GetItemInfoInstant(itemLink)
     local presentation = addon:ResolveItemPresentation(itemLink, itemID)
     local _, _, _, _, _, itemType = GetItemInfo(itemLink)
-    local slotText = (presentation.equipLoc and presentation.equipLoc ~= "" and _G[presentation.equipLoc]) or "Misc"
-    local subtypeText = presentation.itemSubType or itemType or "Unknown type"
+    local slotText = (presentation.equipLoc and presentation.equipLoc ~= "" and _G[presentation.equipLoc]) or addon.L.MISC
+    local subtypeText = presentation.itemSubType or itemType or addon.L.UNKNOWN_TYPE
 
     return {
         icon = presentation.icon,
@@ -1893,10 +1912,10 @@ end
 
 function addon:GetComparisonText(response, fallbackLabel)
     if not response then
-        return fallbackLabel or "No data"
+        return fallbackLabel or addon.L.NO_DATA
     end
 
-    local statusText = addon.L[response.status] or response.status or "Unknown"
+    local statusText = addon.L[response.status] or response.status or addon.L.UNKNOWN
     local deltaText = string.format("%+.1f", response.delta or 0)
     local baselineText = nil
 
@@ -1920,10 +1939,10 @@ end
 
 function addon:GetShortComparisonText(response, fallbackLabel)
     if not response then
-        return fallbackLabel or "No data"
+        return fallbackLabel or addon.L.NO_DATA
     end
 
-    local statusText = addon.L[response.status] or response.status or "Unknown"
+    local statusText = addon.L[response.status] or response.status or addon.L.UNKNOWN
     local delta = response.delta or 0
     local deltaStr = ""
     
@@ -2000,7 +2019,7 @@ function addon:RefreshUI()
 
     local instDB = self.currentViewInstance and self.charDB.instances[self.currentViewInstance] or nil
     local history = instDB and instDB.lootHistory or {}
-    local instName = instDB and instDB.name or "Select Instance..."
+    local instName = instDB and instDB.name or addon.L.SELECT_INSTANCE
     
     self.frame.instanceDropBtn:SetText(instName)
 
@@ -2018,7 +2037,7 @@ function addon:RefreshUI()
             local localResponse = record.responses[self.playerName]
             local reason = localResponse and localResponse.reason or ""
             local status = localResponse and localResponse.status or ""
-            if status == "PASS" and (reason == "Class cannot equip it" or reason == "Class cannot equip this weapon" or reason == "Class cannot equip shields" or reason == "Wrong armor type" or reason == "Unknown weapon slot" or reason == "Not equippable" or reason == "Missing item" or reason == "Unknown slot") then
+            if status == "PASS" and isEquipabilityFailure(reason) then
                 include = false
             end
         end
@@ -2090,12 +2109,12 @@ function addon:RefreshUI()
             local localResponse = record.responses[self.playerName]
             local details = self:GetItemUiDetails(record.itemLink)
             local itemLabel = details.coloredName or details.name or record.itemName or ("item:" .. tostring(record.itemID))
-            local title = string.format("%s looted %s", ownerLabel, itemLabel)
+            local title = string.format(addon.L.LOOTED_BY, ownerLabel, itemLabel)
             local detailsParts = {}
-            if details.slotText and details.slotText ~= "Misc" then
+            if details.slotText and details.slotText ~= addon.L.MISC then
                 table.insert(detailsParts, details.slotText)
             end
-            if details.subtypeText and details.subtypeText ~= "Unknown type" then
+            if details.subtypeText and details.subtypeText ~= addon.L.UNKNOWN_TYPE then
                 table.insert(detailsParts, details.subtypeText)
             end
             if localResponse and localResponse.summary and localResponse.summary ~= "" then
@@ -2163,10 +2182,10 @@ function addon:RefreshUI()
             end
             local wantsIt = localResponse and localResponse.status ~= "PASS"
             if wantsIt then
-                row.interestBtn:SetText("Pass")
+                row.interestBtn:SetText(addon.L.PASS)
                 row.interestBtn:SetVariant("muted")
             else
-                row.interestBtn:SetText("Need !")
+                row.interestBtn:SetText(addon.L.NEED)
                 row.interestBtn:SetVariant("positive")
             end
 
